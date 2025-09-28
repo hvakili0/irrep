@@ -1160,23 +1160,8 @@ class ParserGPAW:
             for ib in range(self.nband)]) for ispin in self.spin_channels]
         Eupdw = [self.calculator.get_eigenvalues(kpt=ik, spin=ispin) for ispin in self.spin_channels]
 
-        # irrep/readfiles.py: MODIFIED
         print(f"shapes of WFupdw: {[wf.shape for wf in WFupdw]}")
-
-        # --- Start of Modification ---
-        # Check if this is a spinor calculation by looking at the array dimension
-        if self.spinor:
-            # For a 5D spinor array, the grid dimensions start from the 3rd element (index 2)
-            ngx, ngy, ngz = WFupdw[0].shape[2:]
-            
-            # Also, correctly combine the up and down spin components of the wavefunction
-            WF = np.concatenate(WFupdw, axis=1)
-        else:
-            # For a standard 4D array, the grid dimensions start from the 2nd element (index 1)
-            ngx, ngy, ngz = WFupdw[0].shape[1:]
-            WF = WFupdw[0]
-        # --- End of Modification ---
-
+        ngx, ngy, ngz = WFupdw[0].shape[1:]
         kpt = self.calculator.get_ibz_k_points()[ik]
         kg, eKG = calc_gvectors(kpt,
                            RecLattice,
