@@ -1174,9 +1174,18 @@ class ParserGPAW:
                             )
         selectG = tuple(kg[:, 0:3].T)
 
-        for i in range(len(WFupdw)):
-            WFupdw[i] = np.fft.fftn(WFupdw[i], axes=(1, 2, 3))
-            WFupdw[i] = np.array([wf[selectG] for wf in WFupdw[i]])
+        if self.spinor:
+            for i in range(len(WFupdw)):
+                # FFT on spatial axes (2, 3, 4) for spinor case
+                wf_gspace = np.fft.fftn(WFupdw[i], axes=(2, 3, 4))
+                # Use advanced indexing to select G-vectors from the last 3 dimensions
+                # The result will have shape (nbands, nspin, n_gvectors)
+                WFupdw[i] = wf_gspace[:, :, selectG[0], selectG[1], selectG[2]]
+        else:
+            # Original logic for non-spinor case
+            for i in range(len(WFupdw)):
+                wf_gspace = np.fft.fftn(WFupdw[i], axes=(1, 2, 3))
+                WFupdw[i] = np.array([wf[selectG] for wf in wf_gspace])
         if self.spinor:
             if len(WFupdw) == 1:
                 WFupdw = WFupdw * 2
