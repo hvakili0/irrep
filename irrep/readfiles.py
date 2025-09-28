@@ -1281,10 +1281,19 @@ def get_soc_gpaw(calc, ik, flatten=True,
                     P1_mi = calc.wfs.kpt_qs[q][s1].P_ani[a]
                     P2_mi = calc.wfs.kpt_qs[q][s2].P_ani[a]
                 if nspin == 1:
-                    P1_mi = calc.wfs.kpt_qs[q][0].P_ani[a]
-                    P2_mi = calc.wfs.kpt_qs[q][0].P_ani[a]
+                    P_mi = calc.wfs.kpt_qs[q][0].P_ani[a]
 
-                h_soc[s1, s2] += np.dot(np.dot(P1_mi.conj(), h_ii), P2_mi.T)
+                if P_mi.ndim == 3: # Spinor case
+                    # Slice the projector for the specific spin channels s1 and s2
+                    P1_s = P_mi[:, s1, :]  # Shape -> (60, 18)
+                    P2_s = P_mi[:, s2, :]  # Shape -> (60, 18)
+                    
+                    # Perform the basis transformation H_band = P_dagger * H_atomic * P
+                    # Shapes: (60,18) @ (18,18) @ (18,60) -> (60,60)
+                    h_block = np.dot(np.dot(P1_s.conj(), h_ii), P2_s.T)
+                    h_soc[s1, s2] += h_block
+                else: # Fallback for non-spinor case if it ever reaches here
+                    h_soc[s1, s2] += np.dot(np.dot(P_mi.conj(), h_ii), P_mi.T)
     h_soc[:] *= Hartree
     if flatten:
         h_soc_old = h_soc.copy()
