@@ -1159,31 +1159,28 @@ class ParserGPAW:
         Parses a single k-point from a GPAW calculation, with corrections
         to handle both standard and non-collinear (spinor) wavefunctions.
         """
-        # --- START OF MODIFICATION ---
+        # --- START OF DEFINITIVE MODIFICATION ---
 
-        # Get the k-point object from the GPAW calculator
-        kpt_q = self.calculator.wfs.kpt_qs[ik]
-        
         # Get the eigenvalues for all bands at this k-point.
         Energy = self.calculator.get_eigenvalues(kpt=ik)
 
         if self.spinor:
-            # For a non-collinear SOC calculation, GPAW returns a 5D array:
-            # (number_of_bands, nspin=2, nx, ny, nz)
-            # Access the wavefunctions directly via the .psit_nG attribute
-            wf_rspace_5d = kpt_q[0].psit_nG[:]
+            # For a non-collinear SOC calculation, use the correct GPAW API call.
+            # get_wave_function_array(kpt=ik, spin=0) returns the full 5D array:
+            # (number_of_bands, nspin=2, nx, ny, nz).
+            wf_rspace_5d = self.calculator.wfs.get_wave_function_array(ik, 0)
             nbands, nspin, ngx, ngy, ngz = wf_rspace_5d.shape
             
             # Reshape into a 4D array by combining the band and spin dimensions.
             # The new shape will be (number_of_bands * 2, nx, ny, nz).
             WF = wf_rspace_5d.reshape((nbands * nspin, ngx, ngy, ngz))
         else:
-            # For a standard or collinear calculation, we get two 4D arrays
-            wf_up = kpt_q[0].psit_nG[:]
-            wf_dw = kpt_q[1].psit_nG[:]
+            # For a standard or collinear calculation, get each spin channel.
+            wf_up = self.calculator.wfs.get_wave_function_array(ik, 0)
+            wf_dw = self.calculator.wfs.get_wave_function_array(ik, 1)
             ngx, ngy, ngz = wf_up.shape[1:]
 
-            # Concatenate them into a single 4D array
+            # Concatenate them into a single 4D array.
             WF = np.concatenate((wf_up, wf_dw), axis=0)
 
         # Get the fractional coordinates of the current k-point.
@@ -1202,7 +1199,6 @@ class ParserGPAW:
                      np.array(kg[:, 2], dtype=int) % ngz)
 
         # Perform the 3D Fast Fourier Transform over the spatial dimensions.
-        # Use fftshift to correctly center the zero-frequency component.
         wf_gspace = np.fft.fftshift(np.fft.fftn(WF, axes=(1, 2, 3)), axes=(1, 2, 3))
         
         # Select the desired G-vector components using direct NumPy indexing.
