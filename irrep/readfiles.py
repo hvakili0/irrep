@@ -1161,47 +1161,54 @@ class ParserGPAW:
         """
         # --- START OF DEFINITIVE MODIFICATION ---
 
-        # Get the eigenvalues for all bands at this k-point.
+        # Get the k-point object, which contains the wavefunction data
+        kpt_q = self.calculator.wfs.kpt_qs[ik]
+        
+        # Get the eigenvalues for all bands at this k-point
         Energy = self.calculator.get_eigenvalues(kpt=ik)
 
+        # Handle the wavefunction array based on the calculation type
         if self.spinor:
-            # For a non-collinear SOC calculation, use the correct GPAW API call.
-            # get_wave_function_array(kpt=ik, spin=0) returns the full 5D array:
-            # (number_of_bands, nspin=2, nx, ny, nz).
-            wf_rspace_5d = self.calculator.wfs.get_wave_function_array(ik, 0)
+            # For a non-collinear SOC calculation, GPAW stores the wavefunctions
+            # in a single 5D array: (nbands, nspin=2, nx, ny, nz).
+            # Access this array directly via the .psit_nG attribute.
+            wf_rspace_5d = kpt_q[0].psit_nG[:]
             nbands, nspin, ngx, ngy, ngz = wf_rspace_5d.shape
             
             # Reshape into a 4D array by combining the band and spin dimensions.
-            # The new shape will be (number_of_bands * 2, nx, ny, nz).
+            # The new shape will be (nbands * 2, nx, ny, nz), which the
+            # rest of the library can process.
             WF = wf_rspace_5d.reshape((nbands * nspin, ngx, ngy, ngz))
         else:
-            # For a standard or collinear calculation, get each spin channel.
-            wf_up = self.calculator.wfs.get_wave_function_array(ik, 0)
-            wf_dw = self.calculator.wfs.get_wave_function_array(ik, 1)
+            # For a standard or collinear calculation, GPAW provides two
+            # separate 4D arrays for spin-up and spin-down.
+            wf_up = kpt_q[0].psit_nG[:]
+            wf_dw = kpt_q[1].psit_nG[:]
             ngx, ngy, ngz = wf_up.shape[1:]
 
-            # Concatenate them into a single 4D array.
+            # Combine them into a single 4D array.
             WF = np.concatenate((wf_up, wf_dw), axis=0)
 
-        # Get the fractional coordinates of the current k-point.
+        # Get the fractional coordinates of the current k-point
         kpt = self.calculator.get_ibz_k_points()[ik]
         
-        # Calculate the G-vectors that are within the specified energy cutoff.
+        # Calculate the G-vectors that are within the specified energy cutoff
         kg, eKG = calc_gvectors(kpt,
                                RecLattice,
                                Ecut,
                                spinor=self.spinor,
                                nplanemax=np.max([ngx, ngy, ngz]) // 2)
         
-        # Convert fractional G-vector coordinates to integer indices for the FFT grid.
+        # Convert the fractional G-vector coordinates to integer indices for the FFT grid,
+        # using the modulo operator (%) to handle periodic boundary conditions.
         g_indices = (np.array(kg[:, 0], dtype=int) % ngx,
                      np.array(kg[:, 1], dtype=int) % ngy,
                      np.array(kg[:, 2], dtype=int) % ngz)
 
-        # Perform the 3D Fast Fourier Transform over the spatial dimensions.
+        # Perform a 3D Fast Fourier Transform and shift the zero-frequency component
         wf_gspace = np.fft.fftshift(np.fft.fftn(WF, axes=(1, 2, 3)), axes=(1, 2, 3))
         
-        # Select the desired G-vector components using direct NumPy indexing.
+        # Select the desired G-vector components using direct NumPy indexing
         WF = wf_gspace[:, g_indices[0], g_indices[1], g_indices[2]]
 
         return Energy, WF, kg, kpt, eKG
