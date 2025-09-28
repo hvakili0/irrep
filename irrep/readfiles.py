@@ -1155,62 +1155,59 @@ class ParserGPAW:
         return (self.nband * (1 + int(self.spinor)), kpred, Lattice, self.spinor, typat, positions, EF_in)
 
     def parse_kpoint(self, ik, RecLattice, Ecut):
-        WFupdw = [np.array([
-            self.calculator.get_pseudo_wave_function(kpt=ik, band=ib, periodic=True, spin=ispin)
-            for ib in range(self.nband)]) for ispin in self.spin_channels]
-        Eupdw = [self.calculator.get_eigenvalues(kpt=ik, spin=ispin) for ispin in self.spin_channels]
+        """
+        Parses a single k-point from a GPAW calculation, with corrections
+        to handle both standard and non-collinear (spinor) wavefunctions.
+        """
+        # --- START OF MODIFICATION ---
 
-        # irrep/readfiles.py: MODIFIED
-        print(f"shapes of WFupdw: {[wf.shape for wf in WFupdw]}")
+        # Get the raw wavefunction array(s) from the GPAW calculator object.
+        WFupdw = [self.calculator.wfs.get_wave_function_arrays(kpt=ik, spin=s)
+                  for s in self.spin_channels]
+        
+        # Get the eigenvalues for all bands at this k-point.
+        Energy = self.calculator.get_eigenvalues(kpt=ik)
 
-        # --- Start of Modification ---
-        # Check if this is a spinor calculation by looking at the array dimension
-        if self.spinor:
-            # For a 5D spinor array, the grid dimensions start from the 3rd element (index 2)
-            ngx, ngy, ngz = WFupdw[0].shape[2:]
+        # Handle the shape of the wavefunction array depending on the calculation type.
+        if self.spinor and len(WFupdw[0].shape) == 5:
+            # For a non-collinear SOC calculation, GPAW returns a 5D array:
+            # (number_of_bands, number_of_spin_components, nx, ny, nz)
+            nbands, nspin, ngx, ngy, ngz = WFupdw[0].shape
             
-            # Also, correctly combine the up and down spin components of the wavefunction
-            WF = np.concatenate(WFupdw, axis=1)
+            # Reshape into a 4D array by combining the band and spin dimensions.
+            # The new shape will be (number_of_bands * 2, nx, ny, nz).
+            WF = WFupdw[0].reshape((nbands * nspin, ngx, ngy, ngz))
+            
         else:
-            # For a standard 4D array, the grid dimensions start from the 2nd element (index 1)
+            # For a standard or collinear calculation, it's a 4D array.
             ngx, ngy, ngz = WFupdw[0].shape[1:]
             WF = WFupdw[0]
-        # --- End of Modification ---
 
+        # Get the fractional coordinates of the current k-point.
         kpt = self.calculator.get_ibz_k_points()[ik]
+        
+        # Calculate the G-vectors that are within the specified energy cutoff.
         kg, eKG = calc_gvectors(kpt,
-                           RecLattice,
-                           Ecut,
-                           spinor=False,
-                           nplanemax=np.max([ngx, ngy, ngz]) // 2
-                            )
-        selectG = tuple(kg[:, 0:3].T)
+                               RecLattice,
+                               Ecut,
+                               spinor=self.spinor,
+                               nplanemax=np.max([ngx, ngy, ngz]) // 2)
+        
+        # Convert the fractional G-vector coordinates to integer indices on the FFT grid.
+        # Use the modulo operator (%) to handle periodic boundary conditions correctly.
+        g_indices = (np.array(kg[:, 0], dtype=int) % ngx,
+                     np.array(kg[:, 1], dtype=int) % ngy,
+                     np.array(kg[:, 2], dtype=int) % ngz)
 
-        for i in range(len(WFupdw)):
-            WFupdw[i] = np.fft.fftn(WFupdw[i], axes=(1, 2, 3))
-            WFupdw[i] = np.array([wf[selectG] for wf in WFupdw[i]])
-        if self.spinor:
-            if len(WFupdw) == 1:
-                WFupdw = WFupdw * 2
-                Eupdw = Eupdw * 2
-            WF = WFupdw[0]
-            WFspinor = np.zeros((2 * WF.shape[0], WF.shape[1], 2), dtype=complex)
-            H = get_soc_gpaw(self.calculator, ik, flatten=True)
-            rng = np.arange(0, 2 * self.nband, 2)
-            for s in range(2):
-                H[rng + s, rng + s] += Eupdw[s]
-            E, V = np.linalg.eigh(H)
-            V = V.T
-            # e, v_mn = self.soc.eigenvectors()
-            for s in range(2):
-                WFspinor[:, :, s] = V[:, s::2] @ WFupdw[s]
-            energies = E
-            WFout = WFspinor
-        else:
-            WFout = WFupdw[0][:, :, None]
-            energies = self.calculator.get_eigenvalues(kpt=ik, spin=self.spin_channels[0])
+        # Perform the 3D Fast Fourier Transform over the spatial dimensions.
+        # Use fftshift to move the zero-frequency component to the center of the spectrum.
+        wf_gspace = np.fft.fftshift(np.fft.fftn(WF, axes=(1, 2, 3)), axes=(1, 2, 3))
+        
+        # Select the desired G-vector components from the Fourier-transformed wavefunctions.
+        # This is an efficient, direct NumPy indexing operation.
+        WF = wf_gspace[:, g_indices[0], g_indices[1], g_indices[2]]
 
-        return energies, WFout, kg, kpt, eKG
+        return Energy, WF, kg, kpt, eKG
 
 
 
