@@ -1161,27 +1161,30 @@ class ParserGPAW:
         """
         # --- START OF MODIFICATION ---
 
-        # Get the raw wavefunction array(s) from the GPAW calculator object.
-        WFupdw = [self.calculator.wfs.get_wave_function_arrays(kpt=ik, spin=s)
-                  for s in self.spin_channels]
+        # Get the k-point object from the GPAW calculator
+        kpt_q = self.calculator.wfs.kpt_qs[ik]
         
         # Get the eigenvalues for all bands at this k-point.
         Energy = self.calculator.get_eigenvalues(kpt=ik)
 
-        # Handle the shape of the wavefunction array depending on the calculation type.
-        if self.spinor and len(WFupdw[0].shape) == 5:
+        if self.spinor:
             # For a non-collinear SOC calculation, GPAW returns a 5D array:
-            # (number_of_bands, number_of_spin_components, nx, ny, nz)
-            nbands, nspin, ngx, ngy, ngz = WFupdw[0].shape
+            # (number_of_bands, nspin=2, nx, ny, nz)
+            # Access the wavefunctions directly via the .psit_nG attribute
+            wf_rspace_5d = kpt_q[0].psit_nG[:]
+            nbands, nspin, ngx, ngy, ngz = wf_rspace_5d.shape
             
             # Reshape into a 4D array by combining the band and spin dimensions.
             # The new shape will be (number_of_bands * 2, nx, ny, nz).
-            WF = WFupdw[0].reshape((nbands * nspin, ngx, ngy, ngz))
-            
+            WF = wf_rspace_5d.reshape((nbands * nspin, ngx, ngy, ngz))
         else:
-            # For a standard or collinear calculation, it's a 4D array.
-            ngx, ngy, ngz = WFupdw[0].shape[1:]
-            WF = WFupdw[0]
+            # For a standard or collinear calculation, we get two 4D arrays
+            wf_up = kpt_q[0].psit_nG[:]
+            wf_dw = kpt_q[1].psit_nG[:]
+            ngx, ngy, ngz = wf_up.shape[1:]
+
+            # Concatenate them into a single 4D array
+            WF = np.concatenate((wf_up, wf_dw), axis=0)
 
         # Get the fractional coordinates of the current k-point.
         kpt = self.calculator.get_ibz_k_points()[ik]
@@ -1193,18 +1196,16 @@ class ParserGPAW:
                                spinor=self.spinor,
                                nplanemax=np.max([ngx, ngy, ngz]) // 2)
         
-        # Convert the fractional G-vector coordinates to integer indices on the FFT grid.
-        # Use the modulo operator (%) to handle periodic boundary conditions correctly.
+        # Convert fractional G-vector coordinates to integer indices for the FFT grid.
         g_indices = (np.array(kg[:, 0], dtype=int) % ngx,
                      np.array(kg[:, 1], dtype=int) % ngy,
                      np.array(kg[:, 2], dtype=int) % ngz)
 
         # Perform the 3D Fast Fourier Transform over the spatial dimensions.
-        # Use fftshift to move the zero-frequency component to the center of the spectrum.
+        # Use fftshift to correctly center the zero-frequency component.
         wf_gspace = np.fft.fftshift(np.fft.fftn(WF, axes=(1, 2, 3)), axes=(1, 2, 3))
         
-        # Select the desired G-vector components from the Fourier-transformed wavefunctions.
-        # This is an efficient, direct NumPy indexing operation.
+        # Select the desired G-vector components using direct NumPy indexing.
         WF = wf_gspace[:, g_indices[0], g_indices[1], g_indices[2]]
 
         return Energy, WF, kg, kpt, eKG
